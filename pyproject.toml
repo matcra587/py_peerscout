@@ -1,0 +1,39 @@
+[project]
+name = "peerscout"
+version = "1.0.0"
+description = "A python package to scrape the Polkachu API for live peers, based on latency and acceptable location."
+authors = [
+  { name = "Matt Craven" }
+]
+
+dependencies = [
+  "requests>=2.32.3",
+  "ipinfo>=5.1.1",
+  "ping3>=4.0.8"
+]
+
+requires-python = ">=3.12,<=3.13"
+license = { file = "LICENSE" }
+
+keywords = ["scraper", "polkachu", "latency", "ipinfo"]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3"
+]
+
+[build-system]
+requires = [
+  "setuptools>=75.8",
+  "wheel"
+]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+peerscout = "peerscout.main:main"
