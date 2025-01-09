@@ -18,6 +18,16 @@ jobs:
         python-version: '3.12'
         cache: 'pip'
 
+    - name: Run Ruff
+      uses: astral-sh/ruff-action@v3
+      with:
+        args: "format --check"
+
+    - name: Run Ruff
+      uses: astral-sh/ruff-action@v3
+      with:
+        args: "check"
+
     - name: Install dependencies
       run: |
         pip install -e .
@@ -31,3 +41,5 @@ jobs:
       with:
         name: test-results
         path: junit/test-results.xml
+
+
