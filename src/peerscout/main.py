@@ -1,14 +1,19 @@
-import ipinfo
-import os
-import ipaddress
-import requests
+"""A Python script for retrieving and filtering network peers based on latency and geographical location.
+
+Uses the Polkachu API to fetch live peers and filters them based on specified criteria.
+"""
+
 import argparse
-from ping3 import ping, EXCEPTIONS
+import ipaddress
+import os
+
+import ipinfo
+import requests
+from ping3 import EXCEPTIONS, ping
 
 
 def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
-    """
-    Makes a simple ICMP request to measure the latency (in milliseconds).
+    """Make a simple ICMP request to measure the latency (in milliseconds).
 
     Args:
         peer (str): The peer endpoint in the format nodeID@ip:port.
@@ -19,33 +24,33 @@ def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
 
     Raises:
         ValueError: If the peer format is invalid or the IP address is invalid.
+
     """
     try:
         _, address = peer.split("@")
         ip, _ = address.split(":")
     except ValueError:
-        raise ValueError(
-            f"Invalid peer format: {peer}. Expected format: nodeID@ip:port"
-        )
+        error_message = f"Invalid peer format: {peer}. Expected format: nodeID@ip:port"
+        raise ValueError(error_message) from None
 
     try:
         ip = ipaddress.ip_address(ip)
     except ValueError:
-        raise ValueError(f"Invalid IP address: {ip}")
+        error_message = f"Invalid IP address: {ip}"
+        raise ValueError(error_message) from None
 
     try:
         result = ping(str(ip), timeout_ms / 1000, unit="ms")
 
         print(f"Latency for {peer}: {result:.3f} milliseconds")
-
-        return result
     except EXCEPTIONS:
         return None
+    else:
+        return result
 
 
 def check_peer_location(peer: str) -> str:
-    """
-    Retrieve the geolocation information of an IP address using the ipinfo.io API.
+    """Retrieve the geolocation information of an IP address using the ipinfo.io API.
 
     Args:
         peer (str): The peer endpoint in the format nodeID@ip:port.
@@ -55,15 +60,15 @@ def check_peer_location(peer: str) -> str:
 
     Raises:
         ipinfo.error.APIError: If the IPinfo API token is missing or invalid.
+
     """
     _, address = peer.split("@")
     ip, _ = address.split(":")
     access_token = os.getenv("IPINFO_ACCESS_TOKEN")
 
     if not access_token:
-        raise ipinfo.error.APIError(
-            403, "No API token provided. Set IPINFO_ACCESS_TOKEN environment variable."
-        )
+        error_message = "No API token provided. Set IPINFO_ACCESS_TOKEN environment variable."
+        raise ipinfo.error.APIError(403, error_message)
 
     handler = ipinfo.getHandler(access_token)
     result = handler.getDetails(ip)
@@ -72,35 +77,34 @@ def check_peer_location(peer: str) -> str:
 
 
 def get_live_peers(network: str) -> list:
-    """
-    Retrieve a list of live peers for the specified network from the Polkachu API.
+    """Retrieve a list of live peers for the specified network from the Polkachu API.
 
     Args:
         network (str): The network name (e.g., 'dydx', 'osmosis').
 
     Returns:
         list: A list of live peer strings (e.g., ["nodeID@1.2.3.4:26656", ...]).
+
     """
     base_url = "https://polkachu.com"
     network = network.lower()
     url = f"{base_url}/api/v2/chains/{network}/live_peers"
 
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=15)
 
         response.raise_for_status()
 
         json = response.json()
-
-        return json["live_peers"]
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
         return []
+    else:
+        return json["live_peers"]
 
 
 def filter_peers_by_country(peers: list, target_country: list) -> list:
-    """
-    Filter a list of peers to only include those located in target_country.
+    """Filter a list of peers to only include those located in target_country.
 
     Args:
         peers (list): List of peer endpoints (nodeID@ip:port).
@@ -108,6 +112,7 @@ def filter_peers_by_country(peers: list, target_country: list) -> list:
 
     Returns:
         list: List of peers located in one of the target countries.
+
     """
     filtered_peers = []
     for peer in peers:
@@ -121,8 +126,7 @@ def filter_peers_by_country(peers: list, target_country: list) -> list:
 
 
 def filter_peers_by_latency(peers: list, max_latency: float) -> list:
-    """
-    Filter a list of peers to only include those with latency below or equal to max_latency.
+    """Filter a list of peers to only include those with latency below or equal to max_latency.
 
     Args:
         peers (list): List of peer endpoints (nodeID@ip:port).
@@ -130,6 +134,7 @@ def filter_peers_by_latency(peers: list, max_latency: float) -> list:
 
     Returns:
         list: List of peers that meet the latency requirement.
+
     """
     filtered_peers = []
     for peer in peers:
@@ -146,6 +151,19 @@ def get_qualified_peers(
     desired_count: int,
     max_attempts: int,
 ) -> list:
+    """Call the necessary functions to find a list of qualified peers that meet the criteria.
+
+    Args:
+        network (str): The network to scout peers for.
+        target_country (list): List of target countries (e.g., ['CA', 'US']).
+        max_latency (float): The maximum acceptable latency in milliseconds.
+        desired_count (int): The desired number of peers to find.
+        max_attempts (int): The maximum number of attempts to find peers.
+
+    Returns:
+        list: List of qualified peers that meet the criteria.
+
+    """
     qualified_peers = []
 
     attempts = 0
@@ -165,21 +183,15 @@ def get_qualified_peers(
         if len(qualified_peers) >= desired_count:
             return qualified_peers[:desired_count]
 
-        print(
-            f"Found {len(qualified_peers)} suitable peers (attempt {attempts}/{max_attempts})..."
-        )
+        print(f"Found {len(qualified_peers)} suitable peers (attempt {attempts}/{max_attempts})...")
 
     return qualified_peers
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Scout for peers based on latency and location"
-    )
+def main() -> None:  # noqa: D103
+    parser = argparse.ArgumentParser(description="Scout for peers based on latency and location")
 
-    parser.add_argument(
-        "--network", type=str, required=True, help="The network to scout peers for"
-    )
+    parser.add_argument("--network", type=str, required=True, help="The network to scout peers for")
 
     parser.add_argument(
         "--target_country",
