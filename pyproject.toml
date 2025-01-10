@@ -37,3 +37,28 @@ build-backend = "setuptools.build_meta"
 
 [project.scripts]
 peerscout = "peerscout.main:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Allow comments at the end of a line
+    "D104", # Allow missing docstrings in __init__ methods
+    "D203", # ignore incorrect-blank-line-before-class
+    "D211", # Ignore no-blank-line-before-class
+    "D213", # Ignore multi-line-summary-second-line
+    "TRY003", # Allow long messages
+]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"src/**/*.py" = [
+    "T201", # Allow print statements
+]
+"tests/*.py" = [
+    "D100", # Allow missing docstrings in tests
+    "D103", # Allow missing docstrings in tests
+    "S101", # asserts allowed in tests...
+    "UP038", # Unnecessary parentheses after 'return' keyword
+]
