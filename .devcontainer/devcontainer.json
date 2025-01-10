@@ -6,7 +6,7 @@
 			"version": "0.9.0"
 		}
 	},
-	"postCreateCommand": "pip install -e .",
+	"postCreateCommand": "pip install -e . && pip install .[dev]",
 	"customizations": {
 		"vscode": {
 			"extensions": [
