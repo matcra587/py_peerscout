@@ -9,7 +9,7 @@ import os
 
 import ipinfo
 import requests
-from ping3 import EXCEPTIONS, ping
+from ping3 import errors, ping
 
 
 def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
@@ -43,7 +43,7 @@ def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
         result = ping(str(ip), timeout_ms / 1000, unit="ms")
 
         print(f"Latency for {peer}: {result:.3f} milliseconds")
-    except EXCEPTIONS:
+    except errors.PingError:
         return None
     else:
         return result
