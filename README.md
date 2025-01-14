@@ -27,7 +27,7 @@ pip install -e .
 Once installed, you can run peerscout directly from your terminal. For example:
 
 ```bash
-export IPINFO_TOKEN
+export IPINFO_ACCESS_TOKEN
 
 peerscout --network dydx --target_country CA,US,UK,DE
 
@@ -59,12 +59,14 @@ d4bc351eda36bfee170d56258820302e3792cf5a@34.107.5.148:26656
 Below are the available command-line arguments for peerscout:
 
   * `-h, --help`: Display the help message and exit.
+  * `--desired_count DESIRED_COUNT` (default: 5): The desired number of peers to find.
+  * `--max_attempts MAX_ATTEMPTS` (default: 5): The maximum number of attempts to find peers.
+  * `--max_latency MAX_LATENCY` (default: 50): The maximum latency (in milliseconds).
   * `--network NETWORK` (default: None): The network to scout peers for.
   * `--target_country TARGET_COUNTRY` (default: CA,US): Comma-separated list of target countries (e.g. 'CA,US' or 'DE').
-  * `--max_latency MAX_LATENCY` (default: 50): The maximum latency (in milliseconds).
 
 ## Development
-A Dev Container configuration (devcontainer.json) is provided at the root of the project. If you open this project in VSCode, you will be prompted to reopen it in the dev container, which sets up a container with all the necessary dependencies for development.
+A Dev Container configuration (`devcontainer.json`) is provided at the root of the project. If you open this project in VSCode, you will be prompted to reopen it in the dev container, which sets up a container with all the necessary dependencies for development.
 
 ## License
 This project is licensed under the MIT License.
