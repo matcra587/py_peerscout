@@ -8,43 +8,59 @@ import ipaddress
 import os
 
 import ipinfo
+import ping3
 import requests
-from ping3 import errors, ping
+from ping3 import errors
+from termcolor import colored
+
+# Enable exceptions mode for ping3
+ping3.EXCEPTIONS = True
 
 
 def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
-    """Make a simple ICMP request to measure the latency (in milliseconds).
+    """Make a simple ICMP request to measure the latency to a peer.
 
     Args:
-        peer (str): The peer endpoint in the format nodeID@ip:port.
-        timeout_ms (float): Timeout in milliseconds (default: 50 ms).
+        peer (str): The peer endpoint in the format `nodeID@ip:port`.
+        timeout_ms (float, optional): Timeout in milliseconds for the ICMP request. Defaults to 50 ms.
 
     Returns:
-        float | None: Round-trip time in milliseconds, or None if the request fails.
-
-    Raises:
-        ValueError: If the peer format is invalid or the IP address is invalid.
+        float | None:
+            - **float**: Round-trip time in milliseconds if the ping is successful.
+            - **None**: If the peer format is invalid, the host is unknown, the request times out,
+              or any ping error occurs.
 
     """
     try:
         _, address = peer.split("@")
         ip, _ = address.split(":")
-    except ValueError:
-        error_message = f"Invalid peer format: {peer}. Expected format: nodeID@ip:port"
-        raise ValueError(error_message) from None
-
-    try:
         ip = ipaddress.ip_address(ip)
-    except ValueError:
-        error_message = f"Invalid IP address: {ip}"
-        raise ValueError(error_message) from None
+    except ValueError as e:
+        msg = colored(f"❌ Invalid peer format or IP: {e}", "red")
+        print(msg)
+        return None
 
     try:
-        result = ping(str(ip), timeout_ms / 1000, unit="ms")
+        result = ping3.ping(str(ip), timeout=timeout_ms / 1000, unit="ms")
+        # With ping3.EXCEPTIONS = True, result should not be None
+        msg = colored(f"✅ Latency for {peer}: {result:.3f} milliseconds", "green")
+        print(msg)
 
-        print(f"Latency for {peer}: {result:.3f} milliseconds")
-    except errors.PingError:
+    except errors.Timeout as e:
+        msg = colored(f"⏰ Timeout for {peer}: {e}", "red")
+        print(msg)
         return None
+
+    except errors.HostUnknown as e:
+        msg = colored(f"🔍 HostUnknown for {peer}: {e}", "red")
+        print(msg)
+        return None
+
+    except errors.PingError as e:
+        msg = colored(f"❌ PingError for {peer}: {e}", "red")
+        print(msg)
+        return None
+
     else:
         return result
 
@@ -92,15 +108,14 @@ def get_live_peers(network: str) -> list:
 
     try:
         response = requests.get(url, timeout=15)
-
         response.raise_for_status()
-
-        json = response.json()
+        json_data = response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
+        msg = colored(f"❌ Error fetching live peers: {e}", "red")
+        print(msg)
         return []
     else:
-        return json["live_peers"]
+        return json_data.get("live_peers", [])
 
 
 def filter_peers_by_country(peers: list, target_country: list) -> list:
@@ -116,12 +131,18 @@ def filter_peers_by_country(peers: list, target_country: list) -> list:
     """
     filtered_peers = []
     for peer in peers:
-        location = check_peer_location(peer)
+        try:
+            location = check_peer_location(peer)
+        except ipinfo.error.APIError as e:
+            msg = colored(f"❌ Error retrieving location for {peer}: {e}", "red")
+            print(msg)
+            continue
 
         if location in target_country:
             filtered_peers.append(peer)
         else:
-            print(f"Skipping {peer} because it's not in our target countries")
+            msg = colored(f"⚠️ Skipping {peer} because it's not in our target countries", "yellow")
+            print(msg)
     return filtered_peers
 
 
@@ -170,6 +191,8 @@ def get_qualified_peers(
 
     while len(qualified_peers) < desired_count and attempts < max_attempts:
         attempts += 1
+        msg = colored(f"🔄 Attempt {attempts} to find peers...", "cyan")
+        print(msg)
         new_peers = get_live_peers(network)
 
         country_filtered = filter_peers_by_country(new_peers, target_country)
@@ -183,9 +206,28 @@ def get_qualified_peers(
         if len(qualified_peers) >= desired_count:
             return qualified_peers[:desired_count]
 
-        print(f"Found {len(qualified_peers)} suitable peers (attempt {attempts}/{max_attempts})...")
+        msg = colored(f"Found {len(qualified_peers)} suitable peers (attempt {attempts}/{max_attempts})...", "blue")
+        print(msg)
+
+    # Optional: Inform if desired_count not met
+    if len(qualified_peers) < desired_count:
+        msg = colored(f"⚠️ Only found {len(qualified_peers)} peers after {max_attempts} attempts.", "yellow")
+        print(msg)
 
     return qualified_peers
+
+
+def peers_to_comma_separated(peers: list) -> str:
+    """Convert a list of peers to a comma-separated string.
+
+    Args:
+        peers (list): List of peer endpoints (nodeID@ip:port).
+
+    Returns:
+        str: Comma-separated string of peers.
+
+    """
+    return ",".join(peers)
 
 
 def main() -> None:  # noqa: D103
@@ -225,9 +267,22 @@ def main() -> None:  # noqa: D103
         help="The maximum number of attempts to find peers",
     )
 
+    parser.add_argument(
+        "--output",
+        type=str,
+        choices=["list", "raw", "string"],
+        default="list",
+        help=(
+            "The format in which you want the data returned. Choices:\n"
+            "  list   : Detailed list with emojis and colored text.\n"
+            "  string : Comma-separated string of peers.\n"
+            "  raw    : List of peers without emojis or colors."
+        ),
+    )
+
     args = parser.parse_args()
 
-    target_countries = [country.strip() for country in args.target_country.split(",")]
+    target_countries = [country.strip().upper() for country in args.target_country.split(",")]
 
     final_peers = get_qualified_peers(
         args.network,
@@ -236,9 +291,27 @@ def main() -> None:  # noqa: D103
         args.desired_count,
         args.max_attempts,
     )
-    print(f"Found {len(final_peers)} peers that meet our criteria:")
-    for peer in final_peers:
-        print(peer)
+
+    if final_peers:
+        match args.output:
+            case "list":
+                msg = colored(f"✅ Found {len(final_peers)} peers that meet our criteria:", "green")
+                print(msg)
+                for peer in final_peers:
+                    msg = colored(f"🖧 {peer}", "green")
+                    print(msg)
+            case "string":
+                cs_output = peers_to_comma_separated(final_peers)
+                msg = colored(f"📄 Comma-Separated Peers:\n{cs_output}", "cyan")
+                print(msg)
+            case "raw":
+                print(f"Found {len(final_peers)} peers that meet our criteria:")
+                for peer in final_peers:
+                    msg = "- " + peer
+                    print(msg)
+    else:
+        msg = colored("❌ No qualified peers found based on the given criteria.", "red")
+        print(msg)
 
 
 if __name__ == "__main__":
