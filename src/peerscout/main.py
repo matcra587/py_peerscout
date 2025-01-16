@@ -159,7 +159,7 @@ def filter_peers_by_latency(peers: list, max_latency: float) -> list:
     """
     filtered_peers = []
     for peer in peers:
-        latency = check_peer_latency(peer)
+        latency = check_peer_latency(peer, max_latency)
         if latency is not None and latency <= max_latency:
             filtered_peers.append(peer)
     return filtered_peers
