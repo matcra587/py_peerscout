@@ -63,6 +63,10 @@ Below are the available command-line arguments for peerscout:
   * `--max_attempts MAX_ATTEMPTS` (default: 5): The maximum number of attempts to find peers.
   * `--max_latency MAX_LATENCY` (default: 50): The maximum latency (in milliseconds).
   * `--network NETWORK` (default: None): The network to scout peers for.
+  * `--output OUTPUT` (default: list): The format in which you want the data returned. Choices:
+    * `list`: Detailed list with emojis and colored text.
+    * `string`: Comma-separated string of peers.
+    * `raw`: List of peers without emojis or colors.
   * `--target_country TARGET_COUNTRY` (default: CA,US): Comma-separated list of target countries (e.g. 'CA,US' or 'DE').
 
 ## Development
