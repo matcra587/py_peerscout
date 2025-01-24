@@ -5,16 +5,29 @@ Uses the Polkachu API to fetch live peers and filters them based on specified cr
 
 import argparse
 import ipaddress
+import logging
 import os
 
 import ipinfo
 import ping3
 import requests
-from ping3 import errors
-from termcolor import colored
 
 # Enable exceptions mode for ping3
 ping3.EXCEPTIONS = True
+
+
+def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
+    """Set up basic logging.
+
+    If debug is True, sets the logger level to DEBUG; otherwise INFO.
+    """
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
@@ -35,34 +48,10 @@ def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
         _, address = peer.split("@")
         ip, _ = address.split(":")
         ip = ipaddress.ip_address(ip)
-    except ValueError as e:
-        msg = colored(f"❌ Invalid peer format or IP: {e}", "red")
-        print(msg)
+    except ValueError:
         return None
 
-    try:
-        result = ping3.ping(str(ip), timeout=timeout_ms / 1000, unit="ms")
-        # With ping3.EXCEPTIONS = True, result should not be None
-        msg = colored(f"✅ Latency for {peer}: {result:.3f} milliseconds", "green")
-        print(msg)
-
-    except errors.Timeout as e:
-        msg = colored(f"⏰ Timeout for {peer}: {e}", "red")
-        print(msg)
-        return None
-
-    except errors.HostUnknown as e:
-        msg = colored(f"🔍 HostUnknown for {peer}: {e}", "red")
-        print(msg)
-        return None
-
-    except errors.PingError as e:
-        msg = colored(f"❌ PingError for {peer}: {e}", "red")
-        print(msg)
-        return None
-
-    else:
-        return result
+    return ping3.ping(str(ip), timeout=timeout_ms / 1000, unit="ms")
 
 
 def check_peer_location(peer: str) -> str:
@@ -111,8 +100,7 @@ def get_live_peers(network: str) -> list:
         response.raise_for_status()
         json_data = response.json()
     except requests.exceptions.RequestException as e:
-        msg = colored(f"❌ Error fetching live peers: {e}", "red")
-        print(msg)
+        logging.warning("Error fetching live peers from %s: %s", url, e)
         return []
     else:
         return json_data.get("live_peers", [])
@@ -134,24 +122,23 @@ def filter_peers_by_country(peers: list, target_country: list) -> list:
         try:
             location = check_peer_location(peer)
         except ipinfo.error.APIError as e:
-            msg = colored(f"❌ Error retrieving location for {peer}: {e}", "red")
-            print(msg)
+            logging.warning("Error retrieving location for %s: %s", peer, e)
             continue
 
         if location in target_country:
             filtered_peers.append(peer)
+            logging.debug("Peer %s is in a target country (%s).", peer, location)
         else:
-            msg = colored(f"⚠️ Skipping {peer} because it's not in our target countries", "yellow")
-            print(msg)
+            logging.debug("Skipping %s (country=%s not in %s).", peer, location, target_country)
     return filtered_peers
 
 
-def filter_peers_by_latency(peers: list, max_latency: float) -> list:
+def filter_peers_by_latency(peers: list, max_latency_ms: float) -> list:
     """Filter a list of peers to only include those with latency below or equal to max_latency.
 
     Args:
         peers (list): List of peer endpoints (nodeID@ip:port).
-        max_latency (float): The maximum acceptable latency in milliseconds.
+        max_latency_ms (float): The maximum acceptable latency in milliseconds.
 
     Returns:
         list: List of peers that meet the latency requirement.
@@ -159,9 +146,30 @@ def filter_peers_by_latency(peers: list, max_latency: float) -> list:
     """
     filtered_peers = []
     for peer in peers:
-        latency = check_peer_latency(peer, max_latency)
-        if latency is not None and latency <= max_latency:
-            filtered_peers.append(peer)
+        try:
+            latency = check_peer_latency(peer, timeout_ms=max_latency_ms)
+
+        except ping3.errors.Timeout as e:
+            logging.debug("Timeout for %s: %s", peer, e)
+            continue
+
+        except ping3.errors.HostUnknown as e:
+            logging.debug("HostUnknown for %s: %s", peer, e)
+            continue
+
+        except ping3.errors.PingError as e:
+            logging.debug("PingError for %s: %s", peer, e)
+            continue
+        else:
+            if latency is None:
+                logging.debug("No latency data for %s.", peer)
+                continue
+
+            if latency <= max_latency_ms:
+                logging.debug("%s is good: latency=%.2f ms <= %.2f ms.", peer, latency, max_latency_ms)
+                filtered_peers.append(peer)
+            else:
+                logging.debug("Skipping %s: latency=%.2f ms > %.2f ms.", peer, latency, max_latency_ms)
     return filtered_peers
 
 
@@ -191,8 +199,13 @@ def get_qualified_peers(
 
     while len(qualified_peers) < desired_count and attempts < max_attempts:
         attempts += 1
-        msg = colored(f"🔄 Attempt {attempts} to find peers...", "cyan")
-        print(msg)
+        if attempts == 1:
+            logging.info(
+                "Starting PeerScout. Looking for %d peers over %d attempts",
+                desired_count,
+                max_attempts,
+            )
+
         new_peers = get_live_peers(network)
 
         country_filtered = filter_peers_by_country(new_peers, target_country)
@@ -204,17 +217,22 @@ def get_qualified_peers(
         qualified_peers = list(set(qualified_peers))
 
         if len(qualified_peers) >= desired_count:
-            return qualified_peers[:desired_count]
+            break
 
-        msg = colored(f"Found {len(qualified_peers)} suitable peers (attempt {attempts}/{max_attempts})...", "blue")
-        print(msg)
+        if len(qualified_peers) == 0:
+            logging.warning(
+                "After %d attempts, we have not found a suitable peer. Retrying...",
+                attempts,
+            )
+        elif len(qualified_peers) < desired_count:
+            logging.info(
+                "After %d attempts, we currently have %d peers (need %d). Retrying...",
+                attempts,
+                len(qualified_peers),
+                desired_count,
+            )
 
-    # Optional: Inform if desired_count not met
-    if len(qualified_peers) < desired_count:
-        msg = colored(f"⚠️ Only found {len(qualified_peers)} peers after {max_attempts} attempts.", "yellow")
-        print(msg)
-
-    return qualified_peers
+    return qualified_peers[:desired_count]
 
 
 def peers_to_comma_separated(peers: list) -> str:
@@ -270,17 +288,20 @@ def main() -> None:  # noqa: D103
     parser.add_argument(
         "--output",
         type=str,
-        choices=["list", "raw", "string"],
+        choices=["list", "string"],
         default="list",
         help=(
             "The format in which you want the data returned. Choices:\n"
-            "  list   : Detailed list with emojis and colored text.\n"
+            "  list   : List of peers suitable for a vars file.\n"
             "  string : Comma-separated string of peers.\n"
-            "  raw    : List of peers without emojis or colors."
         ),
     )
 
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+
     args = parser.parse_args()
+
+    setup_logging(debug=args.debug)
 
     target_countries = [country.strip().upper() for country in args.target_country.split(",")]
 
@@ -295,23 +316,19 @@ def main() -> None:  # noqa: D103
     if final_peers:
         match args.output:
             case "list":
-                msg = colored(f"✅ Found {len(final_peers)} peers that meet our criteria:", "green")
-                print(msg)
+                if len(final_peers) < args.desired_count:
+                    logging.warning("Only %d out of %d peers were found.", len(final_peers), args.desired_count)
+                else:
+                    logging.info("Found %d peers that meet the criteria:", len(final_peers))
                 for peer in final_peers:
-                    msg = colored(f"🖧 {peer}", "green")
+                    msg = f"- {peer}"
                     print(msg)
             case "string":
                 cs_output = peers_to_comma_separated(final_peers)
-                msg = colored(f"📄 Comma-Separated Peers:\n{cs_output}", "cyan")
+                msg = f"Comma-Separated Peers:\n{cs_output}"
                 print(msg)
-            case "raw":
-                print(f"Found {len(final_peers)} peers that meet our criteria:")
-                for peer in final_peers:
-                    msg = "- " + peer
-                    print(msg)
     else:
-        msg = colored("❌ No qualified peers found based on the given criteria.", "red")
-        print(msg)
+        logging.error("No qualified peers found based on the given criteria.")
 
 
 if __name__ == "__main__":
