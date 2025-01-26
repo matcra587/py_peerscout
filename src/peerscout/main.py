@@ -4,6 +4,7 @@ Uses the Polkachu API to fetch live peers and filters them based on specified cr
 """
 
 import argparse
+import difflib
 import ipaddress
 import logging
 import os
@@ -28,6 +29,30 @@ def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
 
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+
+def get_polkachu_data(endpoint: str) -> dict:
+    """Retrieve data from the Polkachu API.
+
+    Args:
+        endpoint (str): The endpoint to fetch data from.
+
+    Returns:
+        dict: The JSON response from the Polkachu API.
+
+    """
+    base_url = "https://polkachu.com"
+    url = f"{base_url}/{endpoint}"
+
+    try:
+        response = requests.request("GET", url, timeout=15)
+        response.raise_for_status()
+        json_data = response.json()
+    except requests.exceptions.RequestException as e:
+        logging.warning("Error fetching data from %s: %s", url, e)
+        return {}
+    else:
+        return json_data
 
 
 def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
@@ -302,6 +327,17 @@ def main() -> None:  # noqa: D103
     args = parser.parse_args()
 
     setup_logging(debug=args.debug)
+
+    valid_chains = get_polkachu_data("api/v2/chains")
+
+    if args.network not in valid_chains:
+        close_matches = difflib.get_close_matches(args.network, valid_chains)
+        msg = "The network '%s' is not supported by Polkachu."
+        if close_matches:
+            msg += f" Did you mean {', '.join(close_matches)}?"
+
+        logging.error(msg, args.network)
+        return
 
     target_countries = [country.strip().upper() for country in args.target_country.split(",")]
 
