@@ -10,35 +10,42 @@ Whilst you can visit Polkachu's website to retrieve a list of peers, there's no 
 * Return additional peer data
 * Poll different APIs
 * Offer more flexible filtering options
-  * Maybe check if we can communicate on the port if we can't ping the endpoint 
+  * Maybe check if we can communicate on the port if we can't ping the endpoint
 
 ## Prerequisites
 An IPinfo API access token. You can [sign up](https://ipinfo.io/signup) for a free account to obtain one.
 
 ## Installation
 
+To run PeerScout, you need to install the dependencies. I personally use uv, but you can use pip (or another package manager) if you prefer.
 ```bash
-Clone the repository
-gh repo clone matcra587/py_peerscout
+uv sync --frozen --no-install-project --no-dev
+```
 
-Navigate into the project folder
-cd py_peerscout
+_OR_
 
-Install in editable mode
+```bash
 pip install -e .
 ```
 
 ## Usage
-Once installed, you can run peerscout directly from your terminal. For example:
+Once installed, you can run peerscout directly from your terminal:
+
+```bash
+export IPINFO_ACCESS_TOKEN=your_token_here
+
+# Then run peerscout with either method:
+uv run peerscout --network cosmos --target_country CA,US,GB,DE # using uv
+
+peerscout --network cosmos --target_country CA,US,GB,DE # using pip
+
+# Add --debug for verbose output
+```
 
 <details>
 <summary>Click to see example output (standard)</summary>
 
 ```bash
-export IPINFO_ACCESS_TOKEN
-
-peerscout --network cosmos --target_country CA,US,GB,DE
-
 INFO: Starting PeerScout. Looking for 5 peers over 5 attempts
 WARNING: After 1 attempts, we have not found a suitable peer. Retrying...
 INFO: After 2 attempts, we currently have 2 peers (need 5). Retrying...
@@ -56,10 +63,6 @@ WARNING: Only 3 out of 5 peers were found.
 <summary>Click to see example output (debug)</summary>
 
 ```bash
-export IPINFO_ACCESS_TOKEN
-
-peerscout --network cosmos --target_country CA,US,GB,DE --debug
-
 INFO: Starting PeerScout. Looking for 5 peers over 5 attempts
 DEBUG: Peer bc73bedb1044e1453a2d7651ab32be4000d3d958@34.195.124.95:26656 is in a target country (US).
 DEBUG: Peer 8eb9545668648234cbd25bc9501bd377d7aaf682@49.12.174.62:26656 is in a target country (DE).
@@ -124,7 +127,11 @@ Below are the available command-line arguments for peerscout:
   * `--debug`: Enable debug logging.
 
 ## Development
-A Dev Container configuration (`devcontainer.json`) is provided at the root of the project. If you open this project in VSCode, you will be prompted to reopen it in the dev container, which sets up a container with all the necessary dependencies for development.
+If you use vscode, you can use the devcontainer configuration (`devcontainer.json`) to set up a container with all the necessary dependencies for development.
+
+If you happen to use uv as I do, you can use `uv sync --all-extras --dev` to install the dependencies from the `uv.lock` file.
+
+Otherwise you can use `pip install -e .[dev]` to install the dependencies.
 
 ## License
 This project is licensed under the MIT License.
