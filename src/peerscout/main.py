@@ -264,9 +264,9 @@ def check_peer_location(peer: str) -> str:
         raise ipinfo.error.APIError(403, error_message)
 
     handler = ipinfo.getHandler(access_token)
-    result = handler.getDetails(ip)
+    details = handler.getDetails(ip).details
 
-    return result.country
+    return details["country"]
 
 
 def filter_peers_by_country(peers: list, target_country: list) -> list:
@@ -336,6 +336,19 @@ def filter_peers_by_latency(peers: list, max_latency_ms: float) -> list:
     return filtered_peers
 
 
+def is_valid_peer(peer: str) -> bool:
+    """Check if a peer is valid (not localhost).
+
+    Args:
+        peer: Peer endpoint in format nodeID@ip:port
+
+    Returns:
+        bool: True if peer is valid, False if localhost
+
+    """
+    return not any(x in peer for x in ["127.0.0.1", "localhost", "::1"])
+
+
 def get_qualified_peers(
     polkachu_data: PolkachuData,
     config: PeerConfig,
@@ -353,7 +366,14 @@ def get_qualified_peers(
                 config.max_attempts,
             )
 
-        new_peers = polkachu_data.fetch_live_peers(config.network).live_peers
+        all_peers = polkachu_data.fetch_live_peers(config.network).live_peers
+
+        new_peers = []
+        for peer in all_peers:
+            if is_valid_peer(peer):
+                new_peers.append(peer)
+            else:
+                logging.info("Skipping %s: invalid peer", peer)
 
         country_filtered = filter_peers_by_country(new_peers, config.target_countries)
 
