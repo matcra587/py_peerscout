@@ -8,6 +8,8 @@ import difflib
 import ipaddress
 import logging
 import os
+from dataclasses import dataclass
+from typing import TypedDict
 
 import ipinfo
 import ping3
@@ -15,6 +17,110 @@ import requests
 
 # Enable exceptions mode for ping3
 ping3.EXCEPTIONS = True
+
+
+class PolkachuService(TypedDict):
+    """Type definition for a single Polkachu service.
+
+    Attributes:
+        active: Whether the service is available
+        details: URL to service details page
+
+    """
+
+    active: bool
+    details: str
+
+
+class PolkachuServices(TypedDict):
+    """Type definition for Polkachu services.
+
+    Attributes:
+        live_peers: Service information for live peers
+
+    """
+
+    live_peers: PolkachuService
+
+
+@dataclass
+class ChainDetails:
+    """Details about a blockchain network from Polkachu API.
+
+    Attributes:
+        network: Network identifier (e.g., "cosmos")
+        name: Human-readable name (e.g., "CosmosHub")
+        chain_id: Chain identifier (e.g., "cosmoshub-4")
+        polkachu_services: Dictionary of available Polkachu services
+
+    """
+
+    network: str
+    name: str
+    chain_id: str
+    polkachu_services: PolkachuServices
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChainDetails":
+        """Create ChainDetails from API response dictionary."""
+        return cls(
+            network=data["network"],
+            name=data["name"],
+            chain_id=data["chain_id"],
+            polkachu_services=data["polkachu_services"],
+        )
+
+
+@dataclass
+class ChainLivePeers:
+    """Details about a blockchain network's live peers from Polkachu API.
+
+    Attributes:
+        network: Network identifier (e.g., "cosmos")
+        polkachu_peer: Polkachu specific state-sync peer
+        live_peers: List of 5 random live peers
+
+    """
+
+    network: str
+    polkachu_peer: str
+    live_peers: list[str]
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChainLivePeers":
+        """Create ChainLivePeers from API response dictionary."""
+        return cls(network=data["network"], polkachu_peer=data["polkachu_peer"], live_peers=data["live_peers"])
+
+
+@dataclass
+class PeerConfig:
+    """Configuration for peer filtering.
+
+    Attributes:
+        network: Network identifier (e.g., "cosmos")
+        target_countries: List of target countries (e.g., ['CA', 'US'])
+        max_latency: Maximum acceptable latency in milliseconds
+        desired_count: Number of peers to find
+        max_attempts: Maximum number of attempts to find peers
+
+    """
+
+    network: str
+    target_countries: list[str]
+    max_latency: float
+    desired_count: int
+    max_attempts: int
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "PeerConfig":
+        """Create PeerCriteria from command line arguments."""
+        return cls(
+            network=args.network,
+            target_countries=[c.strip().upper() for c in args.target_country.split(",")],
+            max_latency=args.max_latency,
+            desired_count=args.desired_count,
+            max_attempts=args.max_attempts,
+        )
 
 
 def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
@@ -31,28 +137,85 @@ def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def get_polkachu_data(endpoint: str) -> dict:
-    """Retrieve data from the Polkachu API.
+class PolkachuData:
+    """A class to interact with the Polkachu API."""
 
-    Args:
-        endpoint (str): The endpoint to fetch data from.
+    def __init__(self, base_url: str = "https://polkachu.com") -> None:
+        """Initialize the Poller with the base URL of the Polkachu API."""
+        self.base_url = base_url
 
-    Returns:
-        dict: The JSON response from the Polkachu API.
+    def fetch_data(self, endpoint: str) -> dict:
+        """Retrieve data from the Polkachu API.
 
-    """
-    base_url = "https://polkachu.com"
-    url = f"{base_url}/{endpoint}"
+        Args:
+            endpoint (str): The endpoint to fetch data from.
 
-    try:
-        response = requests.request("GET", url, timeout=15)
-        response.raise_for_status()
-        json_data = response.json()
-    except requests.exceptions.RequestException as e:
-        logging.warning("Error fetching data from %s: %s", url, e)
-        return {}
-    else:
-        return json_data
+        Returns:
+            dict: The JSON response from the Polkachu API.
+
+        """
+        url = f"{self.base_url}/{endpoint}"
+
+        try:
+            response = requests.request("GET", url, timeout=15)
+            response.raise_for_status()
+            json_data = response.json()
+        except requests.exceptions.RequestException as e:
+            logging.warning("Error fetching data from %s: %s", url, e)
+            return {}
+        else:
+            return json_data
+
+    def fetch_valid_chains(self) -> dict:
+        """Retrieve a list of chains supported by Polkachu.
+
+        Returns:
+            dict: List of supported chains
+
+        """
+        return self.fetch_data("api/v2/chains")
+
+    def fetch_chain_details(self, network: str) -> ChainDetails:
+        """Retrieve detailed information of a chain.
+
+        Args:
+            network (str): The network name (e.g., 'dydx', 'osmosis').
+
+        Returns:
+            ChainDetails: Detailed information of a chain.
+
+        """
+        data = self.fetch_data(f"api/v2/chains/{network}")
+        return ChainDetails.from_dict(data)
+
+    def fetch_live_peers(self, network: str) -> ChainLivePeers:
+        """Retrieve live peers of a chain.
+
+        Args:
+            network (str): The network name (e.g., 'dydx', 'osmosis').
+
+        Returns:
+            ChainLivePeers: 5 random live peers of a chain.
+
+        """
+        data = self.fetch_data(f"api/v2/chains/{network}/live_peers")
+        return ChainLivePeers.from_dict(data)
+
+    def fetch_polkachu_peer(self, network: str) -> ChainLivePeers:
+        """Retrieve the Polkachu internal live state-sync peer of a chain.
+
+        Note:
+            Not actively used. Added for potential future use.
+
+        Args:
+            network (str): The network name (e.g., 'dydx', 'osmosis').
+
+        Returns:
+            ChainLivePeers: Polkachu internal live state-sync peer.
+
+        """
+        data = self.fetch_data(f"api/v2/chains/{network}/live_peers")
+        return ChainLivePeers(network=network, polkachu_peer=data["polkachu_peer"], live_peers=None)
 
 
 def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
@@ -104,31 +267,6 @@ def check_peer_location(peer: str) -> str:
     result = handler.getDetails(ip)
 
     return result.country
-
-
-def get_live_peers(network: str) -> list:
-    """Retrieve a list of live peers for the specified network from the Polkachu API.
-
-    Args:
-        network (str): The network name (e.g., 'dydx', 'osmosis').
-
-    Returns:
-        list: A list of live peer strings (e.g., ["nodeID@1.2.3.4:26656", ...]).
-
-    """
-    base_url = "https://polkachu.com"
-    network = network.lower()
-    url = f"{base_url}/api/v2/chains/{network}/live_peers"
-
-    try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        json_data = response.json()
-    except requests.exceptions.RequestException as e:
-        logging.warning("Error fetching live peers from %s: %s", url, e)
-        return []
-    else:
-        return json_data.get("live_peers", [])
 
 
 def filter_peers_by_country(peers: list, target_country: list) -> list:
@@ -199,49 +337,33 @@ def filter_peers_by_latency(peers: list, max_latency_ms: float) -> list:
 
 
 def get_qualified_peers(
-    network: str,
-    target_country: list,
-    max_latency: float,
-    desired_count: int,
-    max_attempts: int,
+    polkachu_data: PolkachuData,
+    config: PeerConfig,
 ) -> list:
-    """Call the necessary functions to find a list of qualified peers that meet the criteria.
-
-    Args:
-        network (str): The network to scout peers for.
-        target_country (list): List of target countries (e.g., ['CA', 'US']).
-        max_latency (float): The maximum acceptable latency in milliseconds.
-        desired_count (int): The desired number of peers to find.
-        max_attempts (int): The maximum number of attempts to find peers.
-
-    Returns:
-        list: List of qualified peers that meet the criteria.
-
-    """
+    """Find peers meeting the specified config."""
     qualified_peers = []
-
     attempts = 0
 
-    while len(qualified_peers) < desired_count and attempts < max_attempts:
+    while len(qualified_peers) < config.desired_count and attempts < config.max_attempts:
         attempts += 1
         if attempts == 1:
             logging.info(
                 "Starting PeerScout. Looking for %d peers over %d attempts",
-                desired_count,
-                max_attempts,
+                config.desired_count,
+                config.max_attempts,
             )
 
-        new_peers = get_live_peers(network)
+        new_peers = polkachu_data.fetch_live_peers(config.network).live_peers
 
-        country_filtered = filter_peers_by_country(new_peers, target_country)
+        country_filtered = filter_peers_by_country(new_peers, config.target_countries)
 
-        latency_filtered = filter_peers_by_latency(country_filtered, max_latency)
+        latency_filtered = filter_peers_by_latency(country_filtered, config.max_latency)
 
         qualified_peers.extend(latency_filtered)
 
         qualified_peers = list(set(qualified_peers))
 
-        if len(qualified_peers) >= desired_count:
+        if len(qualified_peers) >= config.desired_count:
             break
 
         if len(qualified_peers) == 0:
@@ -249,15 +371,15 @@ def get_qualified_peers(
                 "After %d attempts, we have not found a suitable peer. Retrying...",
                 attempts,
             )
-        elif len(qualified_peers) < desired_count:
+        elif len(qualified_peers) < config.desired_count:
             logging.info(
                 "After %d attempts, we currently have %d peers (need %d). Retrying...",
                 attempts,
                 len(qualified_peers),
-                desired_count,
+                config.desired_count,
             )
 
-    return qualified_peers[:desired_count]
+    return qualified_peers[: config.desired_count]
 
 
 def peers_to_comma_separated(peers: list) -> str:
@@ -273,7 +395,8 @@ def peers_to_comma_separated(peers: list) -> str:
     return ",".join(peers)
 
 
-def main() -> None:  # noqa: D103
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Scout for peers based on latency and location")
 
     parser.add_argument("--network", type=str, required=True, help="The network to scout peers for")
@@ -324,30 +447,33 @@ def main() -> None:  # noqa: D103
 
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def main() -> None:  # noqa: D103
+    args = parse_args()
     setup_logging(debug=args.debug)
 
-    valid_chains = get_polkachu_data("api/v2/chains")
+    polkachu_data = PolkachuData()
+    config = PeerConfig.from_args(args)
+
+    valid_chains = polkachu_data.fetch_valid_chains()
 
     if args.network not in valid_chains:
         close_matches = difflib.get_close_matches(args.network, valid_chains)
         msg = "The network '%s' is not supported by Polkachu."
         if close_matches:
             msg += f" Did you mean {', '.join(close_matches)}?"
-
         logging.error(msg, args.network)
         return
 
-    target_countries = [country.strip().upper() for country in args.target_country.split(",")]
+    chain_details = polkachu_data.fetch_chain_details(args.network)
 
-    final_peers = get_qualified_peers(
-        args.network,
-        target_countries,
-        args.max_latency,
-        args.desired_count,
-        args.max_attempts,
-    )
+    if not chain_details.polkachu_services["live_peers"]["active"]:
+        logging.error("Live peers service not available for %s", chain_details.name)
+        return
+
+    final_peers = get_qualified_peers(polkachu_data, config)
 
     if final_peers:
         match args.output:
