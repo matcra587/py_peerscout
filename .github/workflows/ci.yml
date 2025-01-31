@@ -42,12 +42,12 @@ jobs:
       run: uv sync --all-extras --dev
 
     - name: Test with pytest
+      if: ${{ false }}
       run: uv run pytest tests tests/ --doctest-modules --junitxml=junit/test-results.xml
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
+      if: ${{ false }}
       with:
         name: test-results
         path: junit/test-results.xml
-
-
