@@ -15,6 +15,38 @@ Whilst you can visit Polkachu's website to retrieve a list of peers, there's no 
 ## Prerequisites
 An IPinfo API access token. You can [sign up](https://ipinfo.io/signup) for a free account to obtain one.
 
+## Options
+PeerScout supports configuration through command-line arguments, environment variables, and a config file. Options are processed in this order (later overrides earlier):
+
+1. Default values
+2. Config file (if specified with `-c, --config`)
+3. Environment variables
+4. Command line arguments
+
+### Command Line Arguments
+  * `-h, --help`: Display help message and exit
+  * `-c, --config`: Path to YAML config file
+  * `--network`: Network to scout peers for
+  * `--target-country`: Comma-separated list of target countries
+  * `--desired-count`: Number of peers to find
+  * `--max-attempts`: Maximum attempts to find peers
+  * `--max-latency`: Maximum latency in milliseconds
+  * `--format`: Output format (list/string)
+  * `--access-token`: IPinfo API access token
+  * `-d, --debug`: Enable debug logging
+
+### Environment Variables
+  * `NETWORK`: Network to scout peers for
+  * `TARGET_COUNTRY`: Comma-separated list of target countries
+  * `DESIRED_COUNT`: Number of peers to find
+  * `MAX_ATTEMPTS`: Maximum attempts to find peers
+  * `MAX_LATENCY`: Maximum latency in milliseconds
+  * `FORMAT`: Output format (list/string)
+  * `ACCESS_TOKEN`: IPinfo API access token
+
+### Config File (YAML)
+See `config.example.yaml` for an example. By default, PeerScout will look for the presence of a `config.yaml` file in the same directory as the script.
+
 ## Installation
 
 To run PeerScout, you need to install the dependencies. I personally use uv, but you can use pip (or another package manager) if you prefer.
@@ -25,7 +57,7 @@ uv sync --frozen --no-install-project --no-dev
 _OR_
 
 ```bash
-pip install -e .
+pip install .
 ```
 
 ## Usage
@@ -35,9 +67,9 @@ Once installed, you can run peerscout directly from your terminal:
 export IPINFO_ACCESS_TOKEN=your_token_here
 
 # Then run peerscout with either method:
-uv run peerscout --network cosmos --target_country CA,US,GB,DE # using uv
+uv run peerscout --config /path/to/config.yaml
 
-peerscout --network cosmos --target_country CA,US,GB,DE # using pip
+peerscout --config /path/to/config.yaml
 
 # Add --debug for verbose output
 ```
@@ -112,24 +144,10 @@ WARNING: Only 2 out of 5 peers were found.
 ```
 </details>
 
-## Options
-Below are the available command-line arguments for peerscout:
-
-  * `-h, --help`: Display the help message and exit.
-  * `--desired_count DESIRED_COUNT` (default: 5): The desired number of peers to find.
-  * `--max_attempts MAX_ATTEMPTS` (default: 5): The maximum number of attempts to find peers.
-  * `--max_latency MAX_LATENCY` (default: 50): The maximum latency (in milliseconds).
-  * `--network NETWORK` (default: None): The network to scout peers for.
-  * `--output OUTPUT` (default: list): The format in which you want the data returned. Choices:
-    * `list`: List of peers suitable for an ansible `vars` file.
-    * `string`: Comma-separated string of peers.
-  * `--target_country TARGET_COUNTRY` (default: CA,US): Comma-separated list of target countries (e.g. 'CA,US' or 'DE')
-  * `--debug`: Enable debug logging.
-
 ## Development
 If you use vscode, you can use the devcontainer configuration (`devcontainer.json`) to set up a container with all the necessary dependencies for development.
 
-If you happen to use uv as I do, you can use `uv sync --all-extras --dev` to install the dependencies from the `uv.lock` file.
+If you happen to use uv as I do, you can use `uv sync --all-extras --dev --frozen` to install the dependencies from the `uv.lock` file.
 
 Otherwise you can use `pip install -e .[dev]` to install the dependencies.
 
