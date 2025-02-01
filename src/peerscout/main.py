@@ -123,19 +123,105 @@ class PeerConfig:
         )
 
 
-def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
-    """Set up basic logging.
 
-    If debug is True, sets the logger level to DEBUG; otherwise INFO.
-    """
-    if debug:
-        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
-    else:
-        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+class Config:
+    """Configuration for the peer scout."""
 
-    logging.getLogger("requests").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    def __init__(
+        self,
+        debug: bool,  # noqa: FBT001
+        peers: PeerConfig,
+        output: str,
+    ) -> None:
+        """Initialise configuration with monitoring parameters."""
+        self.debug = debug
+        self.peers = peers
+        self.output = output
 
+
+    @staticmethod
+    def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
+        """Set up basic logging.
+
+        If debug is True, sets the logger level to DEBUG; otherwise INFO.
+        """
+        if debug:
+            logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+        else:
+            logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    def parse_args() -> argparse.Namespace:
+        """Parse command line arguments."""
+        parser = argparse.ArgumentParser(description="Scout for peers based on latency and location")
+
+        parser.add_argument("--network", type=str, required=True, help="The network to scout peers for")
+
+        parser.add_argument(
+            "--target_country",
+            type=str,
+            required=False,
+            default="CA,US",
+            help="Comma-separated list of target countries (e.g. 'CA,US' or 'DE')",
+        )
+
+        parser.add_argument(
+            "--desired_count",
+            type=int,
+            default=5,
+            required=False,
+            help="The desired number of peers to find",
+        )
+
+        parser.add_argument(
+            "--max_latency",
+            type=float,
+            default=50,
+            required=False,
+            help="The maximum latency in milliseconds",
+        )
+
+        parser.add_argument(
+            "--max_attempts",
+            type=int,
+            default=5,
+            required=False,
+            help="The maximum number of attempts to find peers",
+        )
+
+        parser.add_argument(
+            "--output",
+            type=str,
+            choices=["list", "string"],
+            default="list",
+            help=(
+                "The format in which you want the data returned. Choices:\n"
+                "  list   : List of peers suitable for a vars file.\n"
+                "  string : Comma-separated string of peers.\n"
+            ),
+        )
+
+        parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+
+        return parser.parse_args()
+
+    @classmethod
+    def initialise(cls) -> "Config":
+        """Initialise complete monitoring setup and return config."""
+        cls.setup_logging()
+        args = cls.parse_args()
+        return cls.from_args(args)
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "Config":
+        """Create config from parsed arguments."""
+        return cls(
+            debug=args.debug,
+            peers=PeerConfig.from_args(args),
+            output=args.output,
+        )
 
 class PolkachuData:
     """A class to interact with the Polkachu API."""
@@ -357,16 +443,16 @@ def get_qualified_peers(
     qualified_peers = []
     attempts = 0
 
-    while len(qualified_peers) < config.desired_count and attempts < config.max_attempts:
+    while len(qualified_peers) < config.peers.desired_count and attempts < config.peers.max_attempts:
         attempts += 1
         if attempts == 1:
             logging.info(
                 "Starting PeerScout. Looking for %d peers over %d attempts",
-                config.desired_count,
-                config.max_attempts,
+                config.peers.desired_count,
+                config.peers.max_attempts,
             )
 
-        all_peers = polkachu_data.fetch_live_peers(config.network).live_peers
+        all_peers = polkachu_data.fetch_live_peers(config.peers.network).live_peers
 
         new_peers = []
         for peer in all_peers:
@@ -375,15 +461,15 @@ def get_qualified_peers(
             else:
                 logging.info("Skipping %s: invalid peer", peer)
 
-        country_filtered = filter_peers_by_country(new_peers, config.target_countries)
+        country_filtered = filter_peers_by_country(new_peers, config.peers.target_countries)
 
-        latency_filtered = filter_peers_by_latency(country_filtered, config.max_latency)
+        latency_filtered = filter_peers_by_latency(country_filtered, config.peers.max_latency)
 
         qualified_peers.extend(latency_filtered)
 
         qualified_peers = list(set(qualified_peers))
 
-        if len(qualified_peers) >= config.desired_count:
+        if len(qualified_peers) >= config.peers.desired_count:
             break
 
         if len(qualified_peers) == 0:
@@ -391,15 +477,15 @@ def get_qualified_peers(
                 "After %d attempts, we have not found a suitable peer. Retrying...",
                 attempts,
             )
-        elif len(qualified_peers) < config.desired_count:
+        elif len(qualified_peers) < config.peers.desired_count:
             logging.info(
                 "After %d attempts, we currently have %d peers (need %d). Retrying...",
                 attempts,
                 len(qualified_peers),
-                config.desired_count,
+                config.peers.desired_count,
             )
 
-    return qualified_peers[: config.desired_count]
+    return qualified_peers[: config.peers.desired_count]
 
 
 def peers_to_comma_separated(peers: list) -> str:
@@ -415,79 +501,22 @@ def peers_to_comma_separated(peers: list) -> str:
     return ",".join(peers)
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Scout for peers based on latency and location")
-
-    parser.add_argument("--network", type=str, required=True, help="The network to scout peers for")
-
-    parser.add_argument(
-        "--target_country",
-        type=str,
-        required=False,
-        default="CA,US",
-        help="Comma-separated list of target countries (e.g. 'CA,US' or 'DE')",
-    )
-
-    parser.add_argument(
-        "--desired_count",
-        type=int,
-        default=5,
-        required=False,
-        help="The desired number of peers to find",
-    )
-
-    parser.add_argument(
-        "--max_latency",
-        type=float,
-        default=50,
-        required=False,
-        help="The maximum latency in milliseconds",
-    )
-
-    parser.add_argument(
-        "--max_attempts",
-        type=int,
-        default=5,
-        required=False,
-        help="The maximum number of attempts to find peers",
-    )
-
-    parser.add_argument(
-        "--output",
-        type=str,
-        choices=["list", "string"],
-        default="list",
-        help=(
-            "The format in which you want the data returned. Choices:\n"
-            "  list   : List of peers suitable for a vars file.\n"
-            "  string : Comma-separated string of peers.\n"
-        ),
-    )
-
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
-
-    return parser.parse_args()
-
-
 def main() -> None:  # noqa: D103
-    args = parse_args()
-    setup_logging(debug=args.debug)
+    config = Config.initialise()
 
     polkachu_data = PolkachuData()
-    config = PeerConfig.from_args(args)
 
     valid_chains = polkachu_data.fetch_valid_chains()
 
-    if args.network not in valid_chains:
-        close_matches = difflib.get_close_matches(args.network, valid_chains)
+    if config.peers.network not in valid_chains:
+        close_matches = difflib.get_close_matches(config.peers.network, valid_chains)
         msg = "The network '%s' is not supported by Polkachu."
         if close_matches:
             msg += f" Did you mean {', '.join(close_matches)}?"
-        logging.error(msg, args.network)
+        logging.error(msg, config.peers.network)
         return
 
-    chain_details = polkachu_data.fetch_chain_details(args.network)
+    chain_details = polkachu_data.fetch_chain_details(config.peers.network)
 
     if not chain_details.polkachu_services["live_peers"]["active"]:
         logging.error("Live peers service not available for %s", chain_details.name)
@@ -496,10 +525,10 @@ def main() -> None:  # noqa: D103
     final_peers = get_qualified_peers(polkachu_data, config)
 
     if final_peers:
-        match args.output:
+        match config.output:
             case "list":
-                if len(final_peers) < args.desired_count:
-                    logging.warning("Only %d out of %d peers were found.", len(final_peers), args.desired_count)
+                if len(final_peers) < config.peers.desired_count:
+                    logging.warning("Only %d out of %d peers were found.", len(final_peers), config.peers.desired_count)
                 else:
                     logging.info("Found %d peers that meet the criteria:", len(final_peers))
                 for peer in final_peers:
