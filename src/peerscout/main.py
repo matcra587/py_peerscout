@@ -3,14 +3,14 @@
 Uses the Polkachu API to fetch live peers and filters them based on specified criteria.
 """
 
-import argparse
 import difflib
 import ipaddress
 import logging
-import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypedDict
 
+import configargparse
 import ipinfo
 import ping3
 import requests
@@ -110,9 +110,10 @@ class PeerConfig:
     max_latency: float
     desired_count: int
     max_attempts: int
+    access_token: str
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "PeerConfig":
+    def from_args(cls, args: configargparse.Namespace) -> "PeerConfig":
         """Create PeerCriteria from command line arguments."""
         return cls(
             network=args.network,
@@ -120,8 +121,8 @@ class PeerConfig:
             max_latency=args.max_latency,
             desired_count=args.desired_count,
             max_attempts=args.max_attempts,
+            access_token=args.access_token,
         )
-
 
 
 class Config:
@@ -131,13 +132,12 @@ class Config:
         self,
         debug: bool,  # noqa: FBT001
         peers: PeerConfig,
-        output: str,
+        output_format: str,
     ) -> None:
         """Initialise configuration with monitoring parameters."""
         self.debug = debug
         self.peers = peers
-        self.output = output
-
+        self.output_format = output_format
 
     @staticmethod
     def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
@@ -153,58 +153,69 @@ class Config:
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    def parse_args() -> argparse.Namespace:
+    def parse_args() -> configargparse.Namespace:
         """Parse command line arguments."""
-        parser = argparse.ArgumentParser(description="Scout for peers based on latency and location")
+        parser = configargparse.ArgParser(default_config_files=[Path(__file__).joinpath("config.yaml")])
 
-        parser.add_argument("--network", type=str, required=True, help="The network to scout peers for")
+        parser.add("-c", "--config", required=False, is_config_file=True, help="config file path")
 
-        parser.add_argument(
-            "--target_country",
+        parser.add("--network", type=str, required=True, env_var="NETWORK", help="The network to scout peers for")
+
+        parser.add(
+            "--target-country",
             type=str,
             required=False,
             default="CA,US",
+            env_var="TARGET_COUNTRY",
             help="Comma-separated list of target countries (e.g. 'CA,US' or 'DE')",
         )
 
-        parser.add_argument(
-            "--desired_count",
+        parser.add(
+            "--desired-count",
             type=int,
             default=5,
             required=False,
+            env_var="DESIRED_COUNT",
             help="The desired number of peers to find",
         )
 
-        parser.add_argument(
-            "--max_latency",
-            type=float,
+        parser.add(
+            "--max-latency",
+            type=int,
             default=50,
             required=False,
+            env_var="MAX_LATENCY",
             help="The maximum latency in milliseconds",
         )
 
-        parser.add_argument(
-            "--max_attempts",
+        parser.add(
+            "--max-attempts",
             type=int,
             default=5,
             required=False,
+            env_var="MAX_ATTEMPTS",
             help="The maximum number of attempts to find peers",
         )
 
-        parser.add_argument(
-            "--output",
+        parser.add(
+            "--format",
+            dest="output_format",
             type=str,
             choices=["list", "string"],
             default="list",
-            help=(
-                "The format in which you want the data returned. Choices:\n"
-                "  list   : List of peers suitable for a vars file.\n"
-                "  string : Comma-separated string of peers.\n"
-            ),
+            env_var="FORMAT",
+            help="Output format (list/string)",
         )
 
-        parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+        parser.add(
+            "--access-token",
+            type=str,
+            required=False,
+            env_var="ACCESS_TOKEN",
+            help="IPinfo API access token",
+        )
 
+        parser.add("-d", "--debug", action="store_true", help="Enable debug logging.")
         return parser.parse_args()
 
     @classmethod
@@ -215,13 +226,14 @@ class Config:
         return cls.from_args(args)
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "Config":
+    def from_args(cls, args: configargparse.Namespace) -> "Config":
         """Create config from parsed arguments."""
         return cls(
             debug=args.debug,
             peers=PeerConfig.from_args(args),
-            output=args.output,
+            output_format=args.output_format,
         )
+
 
 class PolkachuData:
     """A class to interact with the Polkachu API."""
@@ -328,11 +340,12 @@ def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
     return ping3.ping(str(ip), timeout=timeout_ms / 1000, unit="ms")
 
 
-def check_peer_location(peer: str) -> str:
+def check_peer_location(peer: str, access_token: str) -> str:
     """Retrieve the geolocation information of an IP address using the ipinfo.io API.
 
     Args:
         peer (str): The peer endpoint in the format nodeID@ip:port.
+        access_token (str): The IPinfo API access token.
 
     Returns:
         str: Two-letter country code (e.g., 'US', 'CA').
@@ -343,11 +356,6 @@ def check_peer_location(peer: str) -> str:
     """
     _, address = peer.split("@")
     ip, _ = address.split(":")
-    access_token = os.getenv("IPINFO_ACCESS_TOKEN")
-
-    if not access_token:
-        error_message = "No API token provided. Set IPINFO_ACCESS_TOKEN environment variable."
-        raise ipinfo.error.APIError(403, error_message)
 
     handler = ipinfo.getHandler(access_token)
     details = handler.getDetails(ip).details
@@ -355,12 +363,13 @@ def check_peer_location(peer: str) -> str:
     return details["country"]
 
 
-def filter_peers_by_country(peers: list, target_country: list) -> list:
+def filter_peers_by_country(peers: list, target_country: list, access_token: str) -> list:
     """Filter a list of peers to only include those located in target_country.
 
     Args:
         peers (list): List of peer endpoints (nodeID@ip:port).
         target_country (list): List of valid country codes (e.g., ['CA', 'US']).
+        access_token (str): The IPinfo API access token.
 
     Returns:
         list: List of peers located in one of the target countries.
@@ -369,7 +378,7 @@ def filter_peers_by_country(peers: list, target_country: list) -> list:
     filtered_peers = []
     for peer in peers:
         try:
-            location = check_peer_location(peer)
+            location = check_peer_location(peer, access_token)
         except ipinfo.error.APIError as e:
             logging.warning("Error retrieving location for %s: %s", peer, e)
             continue
@@ -461,7 +470,7 @@ def get_qualified_peers(
             else:
                 logging.info("Skipping %s: invalid peer", peer)
 
-        country_filtered = filter_peers_by_country(new_peers, config.peers.target_countries)
+        country_filtered = filter_peers_by_country(new_peers, config.peers.target_countries, config.access_token)
 
         latency_filtered = filter_peers_by_latency(country_filtered, config.peers.max_latency)
 
@@ -525,7 +534,7 @@ def main() -> None:  # noqa: D103
     final_peers = get_qualified_peers(polkachu_data, config)
 
     if final_peers:
-        match config.output:
+        match config.output_format:
             case "list":
                 if len(final_peers) < config.peers.desired_count:
                     logging.warning("Only %d out of %d peers were found.", len(final_peers), config.peers.desired_count)
