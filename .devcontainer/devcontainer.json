@@ -4,9 +4,10 @@
 	"features": {
 		"ghcr.io/jsburckhardt/devcontainer-features/ruff:1": {
 			"version": "0.9.0"
-		}
+		},
+		"ghcr.io/va-h/devcontainers-features/uv:1": {}
 	},
-	"postCreateCommand": "pip install -e . && pip install .[dev]",
+	"postCreateCommand": "uv venv && uv pip install -r pyproject.toml --all-extras",
 	"customizations": {
 		"vscode": {
 			"extensions": [
