@@ -1,6 +1,6 @@
 ---
 network: "cosmos"
-target_country: "US,CA"
+target_country: "CA,GB,US"
 desired_count: 5
-max_latency: 75
-max_attempts: 10
+max_latency: 150
+max_attempts: 5
