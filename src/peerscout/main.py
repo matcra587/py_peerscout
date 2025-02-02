@@ -4,16 +4,16 @@ Uses the Polkachu API to fetch live peers and filters them based on specified cr
 """
 
 import difflib
-import ipaddress
 import logging
+import socket
+import time
 from dataclasses import dataclass
-from pathlib import Path
+from operator import itemgetter
 from typing import TypedDict
 
 import configargparse
 import ipinfo
 import ping3
-import requests
 
 # Enable exceptions mode for ping3
 ping3.EXCEPTIONS = True
@@ -41,6 +41,26 @@ class PolkachuServices(TypedDict):
     """
 
     live_peers: PolkachuService
+
+
+@dataclass
+class PeerEndpoint:
+    """Represents a peer endpoint with parsed components."""
+
+    node_id: str
+    ip: str
+    port: int
+
+    @classmethod
+    def from_string(cls, endpoint: str) -> "PeerEndpoint":
+        """Parse peer endpoint string."""
+        node_id, address = endpoint.split("@")
+        ip, port = address.split(":")
+        return cls(node_id=node_id, ip=ip, port=int(port))
+
+    def __str__(self) -> str:
+        """Convert back to nodeID@ip:port format."""
+        return f"{self.node_id}@{self.ip}:{self.port}"
 
 
 @dataclass
@@ -117,7 +137,7 @@ class PeerConfig:
         """Create PeerCriteria from command line arguments."""
         return cls(
             network=args.network,
-            target_countries=[c.strip().upper() for c in args.target_country.split(",")],
+            target_countries=args.target_country,
             max_latency=args.max_latency,
             desired_count=args.desired_count,
             max_attempts=args.max_attempts,
@@ -139,65 +159,46 @@ class Config:
         self.peers = peers
         self.output_format = output_format
 
-    @staticmethod
-    def setup_logging(debug: bool = False) -> None:  # noqa: FBT001, FBT002
-        """Set up basic logging.
-
-        If debug is True, sets the logger level to DEBUG; otherwise INFO.
-        """
-        if debug:
-            logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
-        else:
-            logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-        logging.getLogger("requests").setLevel(logging.WARNING)
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
-
-    def parse_args() -> configargparse.Namespace:
+    @classmethod
+    def parse_args(cls) -> configargparse.Namespace:
         """Parse command line arguments."""
-        parser = configargparse.ArgParser(default_config_files=[Path(__file__).joinpath("config.yaml")])
+        parser = configargparse.ArgParser(default_config_files=["config.yaml"])
 
         parser.add("-c", "--config", required=False, is_config_file=True, help="config file path")
-
-        parser.add("--network", type=str, required=True, env_var="NETWORK", help="The network to scout peers for")
-
-        parser.add(
-            "--target-country",
+        parser.add_argument("--network", type=str, required=True, env_var="NETWORK", help="The network to scout peers for")
+        parser.add_argument(
+            "--target_country",
             type=str,
             required=False,
-            default="CA,US",
+            default=None,
             env_var="TARGET_COUNTRY",
             help="Comma-separated list of target countries (e.g. 'CA,US' or 'DE')",
         )
-
-        parser.add(
-            "--desired-count",
+        parser.add_argument(
+            "--desired_count",
             type=int,
             default=5,
             required=False,
             env_var="DESIRED_COUNT",
             help="The desired number of peers to find",
         )
-
-        parser.add(
-            "--max-latency",
+        parser.add_argument(
+            "--max_latency",
             type=int,
             default=50,
             required=False,
             env_var="MAX_LATENCY",
             help="The maximum latency in milliseconds",
         )
-
-        parser.add(
-            "--max-attempts",
+        parser.add_argument(
+            "--max_attempts",
             type=int,
             default=5,
             required=False,
             env_var="MAX_ATTEMPTS",
             help="The maximum number of attempts to find peers",
         )
-
-        parser.add(
+        parser.add_argument(
             "--format",
             dest="output_format",
             type=str,
@@ -206,23 +207,34 @@ class Config:
             env_var="FORMAT",
             help="Output format (list/string)",
         )
-
-        parser.add(
-            "--access-token",
+        parser.add_argument(
+            "--access_token",
             type=str,
             required=False,
             env_var="ACCESS_TOKEN",
             help="IPinfo API access token",
         )
+        parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging.")
 
-        parser.add("-d", "--debug", action="store_true", help="Enable debug logging.")
-        return parser.parse_args()
+        args = parser.parse_args()
+        logging.debug("All config values: %s", args)
+        return args
 
     @classmethod
     def initialise(cls) -> "Config":
         """Initialise complete monitoring setup and return config."""
-        cls.setup_logging()
+        logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+
         args = cls.parse_args()
+
+        if args.debug:
+            logging.getLogger().setLevel(logging.DEBUG)
+        else:
+            logging.getLogger().setLevel(logging.INFO)
+
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+
         return cls.from_args(args)
 
     @classmethod
@@ -235,71 +247,62 @@ class Config:
         )
 
 
-class PolkachuData:
+class Data:
     """A class to interact with the Polkachu API."""
 
-    def __init__(self, base_url: str = "https://polkachu.com") -> None:
+    def __init__(self, config: Config, base_url: str = "https://polkachu.com") -> None:
         """Initialize the Poller with the base URL of the Polkachu API."""
+        self.config = config
         self.base_url = base_url
 
-    def fetch_data(self, endpoint: str) -> dict:
-        """Retrieve data from the Polkachu API.
+    def _fetch_data(self, endpoint: str) -> dict:
+        """Retrieve data from the Polkachu API."""
+        import requests
 
-        Args:
-            endpoint (str): The endpoint to fetch data from.
-
-        Returns:
-            dict: The JSON response from the Polkachu API.
-
-        """
         url = f"{self.base_url}/{endpoint}"
 
         try:
-            response = requests.request("GET", url, timeout=15)
+            response = requests.get(url, timeout=15)
             response.raise_for_status()
-            json_data = response.json()
-        except requests.exceptions.RequestException as e:
+            return response.json()
+        except requests.RequestException as e:
             logging.warning("Error fetching data from %s: %s", url, e)
             return {}
-        else:
-            return json_data
 
     def fetch_valid_chains(self) -> dict:
-        """Retrieve a list of chains supported by Polkachu.
+        """Retrieve a list of chains supported by Polkachu."""
+        return self._fetch_data("api/v2/chains")
 
-        Returns:
-            dict: List of supported chains
-
-        """
-        return self.fetch_data("api/v2/chains")
-
-    def fetch_chain_details(self, network: str) -> ChainDetails:
-        """Retrieve detailed information of a chain.
-
-        Args:
-            network (str): The network name (e.g., 'dydx', 'osmosis').
-
-        Returns:
-            ChainDetails: Detailed information of a chain.
-
-        """
-        data = self.fetch_data(f"api/v2/chains/{network}")
+    def fetch_chain_details(self) -> ChainDetails:
+        """Retrieve detailed information of a chain."""
+        data = self._fetch_data(f"api/v2/chains/{self.config.peers.network}")
         return ChainDetails.from_dict(data)
 
-    def fetch_live_peers(self, network: str) -> ChainLivePeers:
-        """Retrieve live peers of a chain.
+    def fetch_live_peers(self) -> ChainLivePeers:
+        """Retrieve live peers of a chain."""
+        unique_peers = set()
+        peer_amount = 25
+        attempts = 0
+        last_data = None
 
-        Args:
-            network (str): The network name (e.g., 'dydx', 'osmosis').
+        while attempts < self.config.peers.max_attempts and len(unique_peers) < peer_amount:
+            data = self._fetch_data(f"api/v2/chains/{self.config.peers.network}/live_peers")
+            if "live_peers" in data:
+                last_data = data
+                unique_peers.update(data["live_peers"])
+                logging.debug("Found %d unique peers out of %d desired", len(unique_peers), peer_amount)
+            attempts += 1
 
-        Returns:
-            ChainLivePeers: 5 random live peers of a chain.
+        if not last_data:
+            return ChainLivePeers(network=self.config.peers.network, polkachu_peer="", live_peers=[])
 
-        """
-        data = self.fetch_data(f"api/v2/chains/{network}/live_peers")
-        return ChainLivePeers.from_dict(data)
+        final_peers = list(unique_peers)[:peer_amount]
+        logging.info("Starting with %d peers", len(final_peers))
+        return ChainLivePeers(
+            network=self.config.peers.network, polkachu_peer=last_data["polkachu_peer"], live_peers=final_peers
+        )
 
-    def fetch_polkachu_peer(self, network: str) -> ChainLivePeers:
+    def fetch_polkachu_peer(self) -> ChainLivePeers:
         """Retrieve the Polkachu internal live state-sync peer of a chain.
 
         Note:
@@ -312,210 +315,128 @@ class PolkachuData:
             ChainLivePeers: Polkachu internal live state-sync peer.
 
         """
-        data = self.fetch_data(f"api/v2/chains/{network}/live_peers")
-        return ChainLivePeers(network=network, polkachu_peer=data["polkachu_peer"], live_peers=None)
+        data = self._fetch_data(f"api/v2/chains/{self.config.peers.network}/live_peers")
+        return ChainLivePeers(network=self.config.peers.network, polkachu_peer=data["polkachu_peer"], live_peers=None)
 
 
-def check_peer_latency(peer: str, timeout_ms: float = 50) -> float | None:
-    """Make a simple ICMP request to measure the latency to a peer.
+class Filter:
+    """Filter peers based on location and latency criteria."""
 
-    Args:
-        peer (str): The peer endpoint in the format `nodeID@ip:port`.
-        timeout_ms (float, optional): Timeout in milliseconds for the ICMP request. Defaults to 50 ms.
+    def __init__(self, config: Config) -> None:
+        """Initialise filter with configuration."""
+        self.config = config
 
-    Returns:
-        float | None:
-            - **float**: Round-trip time in milliseconds if the ping is successful.
-            - **None**: If the peer format is invalid, the host is unknown, the request times out,
-              or any ping error occurs.
+    def filter_peers(self, peers: list[str]) -> list[str]:
+        """Apply all filters in sequence with timing metrics."""
+        start_total = time.perf_counter()
+        peer_endpoints = [PeerEndpoint.from_string(peer) for peer in peers]
 
-    """
-    try:
-        _, address = peer.split("@")
-        ip, _ = address.split(":")
-        ip = ipaddress.ip_address(ip)
-    except ValueError:
-        return None
+        start = time.perf_counter()
+        filtered_peers = self._filter_invalid_peers(peer_endpoints)
+        invalid_time = time.perf_counter() - start
+        logging.debug("Invalid peer filtering took %.2f seconds", invalid_time)
 
-    return ping3.ping(str(ip), timeout=timeout_ms / 1000, unit="ms")
+        start = time.perf_counter()
+        filtered_peers = self._filter_by_country(filtered_peers)
+        country_time = time.perf_counter() - start
+        logging.debug("Country filtering took %.2f seconds", country_time)
 
+        start = time.perf_counter()
+        filtered_peers = self._filter_by_latency(filtered_peers)
+        latency_time = time.perf_counter() - start
+        logging.debug("Latency filtering took %.2f seconds", latency_time)
 
-def check_peer_location(peer: str, access_token: str) -> str:
-    """Retrieve the geolocation information of an IP address using the ipinfo.io API.
+        total_time = time.perf_counter() - start_total
+        logging.debug("Total filtering took %.2f seconds", total_time)
 
-    Args:
-        peer (str): The peer endpoint in the format nodeID@ip:port.
-        access_token (str): The IPinfo API access token.
+        return [str(peer) for peer in filtered_peers][: self.config.peers.desired_count]
 
-    Returns:
-        str: Two-letter country code (e.g., 'US', 'CA').
+    def _filter_invalid_peers(self, peers: list[PeerEndpoint]) -> list[PeerEndpoint]:
+        """Remove entities that we know are not presenting the correct p2p address.
 
-    Raises:
-        ipinfo.error.APIError: If the IPinfo API token is missing or invalid.
+        >>> 127.0.0.1, localhost, ::1
+        """
+        filtered_peers = [peer for peer in peers if peer.ip not in ["127.0.0.1", "localhost", "::1"]]
+        if len(peers) - len(filtered_peers) > 0:
+            logging.info("Filtered out %d localhost peers", len(peers) - len(filtered_peers))
+        return filtered_peers
 
-    """
-    _, address = peer.split("@")
-    ip, _ = address.split(":")
+    def _filter_by_country(self, peers: list[PeerEndpoint]) -> list[PeerEndpoint]:
+        """Filter peers by geographic location using batch processing."""
+        handler = ipinfo.getHandler(self.config.peers.access_token)
+        peer_map = {peer.ip: peer for peer in peers}
 
-    handler = ipinfo.getHandler(access_token)
-    details = handler.getDetails(ip).details
-
-    return details["country"]
-
-
-def filter_peers_by_country(peers: list, target_country: list, access_token: str) -> list:
-    """Filter a list of peers to only include those located in target_country.
-
-    Args:
-        peers (list): List of peer endpoints (nodeID@ip:port).
-        target_country (list): List of valid country codes (e.g., ['CA', 'US']).
-        access_token (str): The IPinfo API access token.
-
-    Returns:
-        list: List of peers located in one of the target countries.
-
-    """
-    filtered_peers = []
-    for peer in peers:
         try:
-            location = check_peer_location(peer, access_token)
+            batch_details = handler.getBatchDetails(list(peer_map.keys()))
+            filtered_peers = []
+            for ip, details in batch_details.items():
+                country = details.get("country") if isinstance(details, dict) else details
+                if country in self.config.peers.target_countries:
+                    filtered_peers.append(peer_map[ip])
+                    logging.debug("Peer %s is in target country (%s)", peer_map[ip], country)
         except ipinfo.error.APIError as e:
-            logging.warning("Error retrieving location for %s: %s", peer, e)
-            continue
-
-        if location in target_country:
-            filtered_peers.append(peer)
-            logging.debug("Peer %s is in a target country (%s).", peer, location)
+            logging.warning("Batch location lookup failed: %s", e)
+            return []
         else:
-            logging.debug("Skipping %s (country=%s not in %s).", peer, location, target_country)
-    return filtered_peers
+            if len(peers) - len(filtered_peers) > 0:
+                logging.info("Filtered out %d peers not in target country", len(peers) - len(filtered_peers))
+            return filtered_peers
 
+    def _filter_by_latency(self, peers: list[PeerEndpoint]) -> list[PeerEndpoint]:
+        """Filter peers by latency."""
+        peer_latencies = []
+        high_latency_peers = []
+        closed_ports = []
+        error_peers = []
 
-def filter_peers_by_latency(peers: list, max_latency_ms: float) -> list:
-    """Filter a list of peers to only include those with latency below or equal to max_latency.
+        for peer in peers:
+            try:
+                latency = ping3.ping(str(peer.ip), timeout=self.config.peers.max_latency / 1000, unit="ms")
+                if latency is None:
+                    logging.debug("ICMP appears blocked for %s, trying TCP", peer.ip)
+                    if self._test_port_open(peer):
+                        peer_latencies.append((peer, self.config.peers.max_latency))
+                        logging.debug("TCP connection successful to %s:%d", peer.ip, peer.port)
+                    else:
+                        closed_ports.append(peer)
+                        logging.debug("TCP connection failed to %s:%d", peer.ip, peer.port)
+                elif latency <= self.config.peers.max_latency:
+                    peer_latencies.append((peer, latency))
+                    logging.debug("Peer %s has good latency: %.2f ms", peer, latency)
+                else:
+                    high_latency_peers.append(peer)
+                    logging.debug("Peer %s latency too high: %.2f ms", peer, latency)
+            except (ping3.errors.HostUnknown, ping3.errors.PingError) as e:
+                error_peers.append(peer)
+                logging.debug("Ping error for %s: %s", peer.ip, e)
 
-    Args:
-        peers (list): List of peer endpoints (nodeID@ip:port).
-        max_latency_ms (float): The maximum acceptable latency in milliseconds.
+        peer_latencies.sort(key=itemgetter(1))
+        filtered_peers = [peer for peer, _ in peer_latencies]
 
-    Returns:
-        list: List of peers that meet the latency requirement.
+        if len(peers) - len(filtered_peers) > 0:
+            msg = "Summary: %d total peers processed:\n- %d passed\n- %d high latency\n- %d closed ports\n- %d ping errors"
+            logging.info(
+                msg, len(peers), len(filtered_peers), len(high_latency_peers), len(closed_ports), len(error_peers)
+            )
 
-    """
-    filtered_peers = []
-    for peer in peers:
+        return filtered_peers
+
+    def _test_port_open(self, peer: PeerEndpoint) -> bool:
+        """Test if a port is open on a peer in the event that the ping times out."""
         try:
-            latency = check_peer_latency(peer, timeout_ms=max_latency_ms)
-
-        except ping3.errors.Timeout as e:
-            logging.debug("Timeout for %s: %s", peer, e)
-            continue
-
-        except ping3.errors.HostUnknown as e:
-            logging.debug("HostUnknown for %s: %s", peer, e)
-            continue
-
-        except ping3.errors.PingError as e:
-            logging.debug("PingError for %s: %s", peer, e)
-            continue
-        else:
-            if latency is None:
-                logging.debug("No latency data for %s.", peer)
-                continue
-
-            if latency <= max_latency_ms:
-                logging.debug("%s is good: latency=%.2f ms <= %.2f ms.", peer, latency, max_latency_ms)
-                filtered_peers.append(peer)
-            else:
-                logging.debug("Skipping %s: latency=%.2f ms > %.2f ms.", peer, latency, max_latency_ms)
-    return filtered_peers
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                return s.connect_ex((peer.ip, peer.port)) == 0
+        except OSError:
+            return False
 
 
-def is_valid_peer(peer: str) -> bool:
-    """Check if a peer is valid (not localhost).
-
-    Args:
-        peer: Peer endpoint in format nodeID@ip:port
-
-    Returns:
-        bool: True if peer is valid, False if localhost
-
-    """
-    return not any(x in peer for x in ["127.0.0.1", "localhost", "::1"])
-
-
-def get_qualified_peers(
-    polkachu_data: PolkachuData,
-    config: PeerConfig,
-) -> list:
-    """Find peers meeting the specified config."""
-    qualified_peers = []
-    attempts = 0
-
-    while len(qualified_peers) < config.peers.desired_count and attempts < config.peers.max_attempts:
-        attempts += 1
-        if attempts == 1:
-            logging.info(
-                "Starting PeerScout. Looking for %d peers over %d attempts",
-                config.peers.desired_count,
-                config.peers.max_attempts,
-            )
-
-        all_peers = polkachu_data.fetch_live_peers(config.peers.network).live_peers
-
-        new_peers = []
-        for peer in all_peers:
-            if is_valid_peer(peer):
-                new_peers.append(peer)
-            else:
-                logging.info("Skipping %s: invalid peer", peer)
-
-        country_filtered = filter_peers_by_country(new_peers, config.peers.target_countries, config.access_token)
-
-        latency_filtered = filter_peers_by_latency(country_filtered, config.peers.max_latency)
-
-        qualified_peers.extend(latency_filtered)
-
-        qualified_peers = list(set(qualified_peers))
-
-        if len(qualified_peers) >= config.peers.desired_count:
-            break
-
-        if len(qualified_peers) == 0:
-            logging.warning(
-                "After %d attempts, we have not found a suitable peer. Retrying...",
-                attempts,
-            )
-        elif len(qualified_peers) < config.peers.desired_count:
-            logging.info(
-                "After %d attempts, we currently have %d peers (need %d). Retrying...",
-                attempts,
-                len(qualified_peers),
-                config.peers.desired_count,
-            )
-
-    return qualified_peers[: config.peers.desired_count]
-
-
-def peers_to_comma_separated(peers: list) -> str:
-    """Convert a list of peers to a comma-separated string.
-
-    Args:
-        peers (list): List of peer endpoints (nodeID@ip:port).
-
-    Returns:
-        str: Comma-separated string of peers.
-
-    """
-    return ",".join(peers)
-
-
-def main() -> None:  # noqa: D103
+def main() -> None:
+    """Run peerscout against desired network."""
     config = Config.initialise()
+    data = Data(config)
 
-    polkachu_data = PolkachuData()
-
-    valid_chains = polkachu_data.fetch_valid_chains()
+    valid_chains = data.fetch_valid_chains()
 
     if config.peers.network not in valid_chains:
         close_matches = difflib.get_close_matches(config.peers.network, valid_chains)
@@ -525,30 +446,34 @@ def main() -> None:  # noqa: D103
         logging.error(msg, config.peers.network)
         return
 
-    chain_details = polkachu_data.fetch_chain_details(config.peers.network)
+    chain_details = data.fetch_chain_details()
 
     if not chain_details.polkachu_services["live_peers"]["active"]:
         logging.error("Live peers service not available for %s", chain_details.name)
         return
 
-    final_peers = get_qualified_peers(polkachu_data, config)
+    peers_data = data.fetch_live_peers()
+    peers = peers_data.live_peers
 
-    if final_peers:
+    filtered_data = Filter(config)
+    valid_peers = filtered_data.filter_peers(peers)
+
+    if valid_peers:
         match config.output_format:
             case "list":
-                if len(final_peers) < config.peers.desired_count:
-                    logging.warning("Only %d out of %d peers were found.", len(final_peers), config.peers.desired_count)
+                if len(valid_peers) < config.peers.desired_count:
+                    logging.warning("Only %d out of %d peers were found.", len(valid_peers), config.peers.desired_count)
                 else:
-                    logging.info("Found %d peers that meet the criteria:", len(final_peers))
-                for peer in final_peers:
+                    logging.info("Found %d peers that meet the criteria:", len(valid_peers))
+                for peer in valid_peers:
                     msg = f"- {peer}"
                     print(msg)
             case "string":
-                cs_output = peers_to_comma_separated(final_peers)
+                cs_output = ",".join(valid_peers)
                 msg = f"Comma-Separated Peers:\n{cs_output}"
                 print(msg)
     else:
-        logging.error("No qualified peers found based on the given criteria.")
+        logging.error("No valid peers found based on the given criteria.")
 
 
 if __name__ == "__main__":
