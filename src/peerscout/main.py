@@ -165,7 +165,9 @@ class Config:
         parser = configargparse.ArgParser(default_config_files=["config.yaml"])
 
         parser.add("-c", "--config", required=False, is_config_file=True, help="config file path")
-        parser.add_argument("--network", type=str, required=True, env_var="NETWORK", help="The network to scout peers for")
+        parser.add_argument(
+            "--network", type=str, required=True, env_var="NETWORK", help="The network to scout peers for"
+        )
         parser.add_argument(
             "--target_country",
             type=str,
@@ -414,8 +416,14 @@ class Filter:
         filtered_peers = [peer for peer, _ in peer_latencies]
 
         if len(peers) - len(filtered_peers) > 0:
-            msg = "Summary: %d total peers processed:\n- %d passed\n- %d high latency\n- %d closed ports\n- %d ping errors"
-            logging.info(
+            msg = (
+                "Summary: %d total peers processed:\n"
+                "- %d passed\n"
+                "- %d high latency\n"
+                "- %d closed ports\n"
+                "- %d ping errors"
+            )
+            logging.debug(
                 msg, len(peers), len(filtered_peers), len(high_latency_peers), len(closed_ports), len(error_peers)
             )
 
