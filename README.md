@@ -10,7 +10,6 @@ Whilst you can visit Polkachu's website to retrieve a list of peers, there's no 
 * Return additional peer data
 * Poll different APIs
 * Offer more flexible filtering options
-  * Maybe check if we can communicate on the port if we can't ping the endpoint
 
 ## Prerequisites
 An IPinfo API access token. You can [sign up](https://ipinfo.io/signup) for a free account to obtain one.
@@ -27,7 +26,7 @@ PeerScout supports configuration through command-line arguments, environment var
   * `-h, --help`: Display help message and exit
   * `-c, --config`: Path to YAML config file
   * `--network`: Network to scout peers for
-  * `--target-country`: Comma-separated list of target countries
+  * `--target-countries`: Comma or space-separated list of target countries
   * `--desired-count`: Number of peers to find
   * `--max-attempts`: Maximum attempts to find peers
   * `--max-latency`: Maximum latency in milliseconds
@@ -37,7 +36,7 @@ PeerScout supports configuration through command-line arguments, environment var
 
 ### Environment Variables
   * `NETWORK`: Network to scout peers for
-  * `TARGET_COUNTRY`: Comma-separated list of target countries
+  * `TARGET_COUNTRIES`: Comma-separated list of target countries
   * `DESIRED_COUNT`: Number of peers to find
   * `MAX_ATTEMPTS`: Maximum attempts to find peers
   * `MAX_LATENCY`: Maximum latency in milliseconds
@@ -150,6 +149,14 @@ If you use vscode, you can use the devcontainer configuration (`devcontainer.jso
 If you happen to use uv as I do, you can use `uv sync --all-extras --dev --frozen` to install the dependencies from the `uv.lock` file.
 
 Otherwise you can use `pip install -e .[dev]` to install the dependencies.
+
+### Testing
+To run the tests, you can use `uv run behave`. This will run the tests in the `features` directory.
+
+I am using `behave` to test the functionality of the script. How I've written the tests may not be the best way to do it, but it's a good start. I am using this as an excuse to learn more about BDD and how to write better tests.
+
+### Linting
+To run the linting, you can use `uv run ruff format` to format the code, and `uv run ruff check` to check the code.
 
 ## License
 This project is licensed under the MIT License.
