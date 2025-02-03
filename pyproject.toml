@@ -27,7 +27,7 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
   "ruff>=0.9.4",
-  "pytest>=8.3"
+  "behave>=1.2.6"
 ]
 
 [build-system]
@@ -56,11 +56,8 @@ ignore = [
 
 [tool.ruff.lint.extend-per-file-ignores]
 "src/**/*.py" = [
-    "T201", # Allow print statements
+    "T201", # Allow print statements,
+    "PLR0912", # Allow too many branches
+    "C901", # Allow main to be too complex
 ]
-"tests/*.py" = [
-    "D100", # Allow missing docstrings in tests
-    "D103", # Allow missing docstrings in tests
-    "S101", # asserts allowed in tests...
-    "UP038", # Unnecessary parentheses after 'return' keyword
-]
+"features/**/*.py" = ["ALL"]
