@@ -5,6 +5,7 @@ Uses the Polkachu API to fetch live peers and filters them based on specified cr
 
 import difflib
 import logging
+import re
 import socket
 import time
 from dataclasses import dataclass
@@ -132,12 +133,18 @@ class PeerConfig:
     max_attempts: int
     access_token: str
 
+    def __post_init__(self) -> None:
+        """Clean up target countries after initialisation."""
+        combined = " ".join(self.target_countries)
+        split_countries = re.split(r"[\s,]+", combined)
+        self.target_countries = [country.strip() for country in split_countries if country.strip()]
+
     @classmethod
     def from_args(cls, args: configargparse.Namespace) -> "PeerConfig":
         """Create PeerCriteria from command line arguments."""
         return cls(
             network=args.network,
-            target_countries=args.target_country,
+            target_countries=args.target_countries,
             max_latency=args.max_latency,
             desired_count=args.desired_count,
             max_attempts=args.max_attempts,
@@ -162,19 +169,25 @@ class Config:
     @classmethod
     def parse_args(cls) -> configargparse.Namespace:
         """Parse command line arguments."""
-        parser = configargparse.ArgParser(default_config_files=["config.yaml"])
+        parser = configargparse.ArgParser(
+            config_file_parser_class=configargparse.YAMLConfigFileParser,
+            default_config_files=["config.yaml"],
+            description="A tool for gathering and filtering peers for a given network from Polkachu.",
+            add_help=True,
+        )
 
         parser.add("-c", "--config", required=False, is_config_file=True, help="config file path")
         parser.add_argument(
             "--network", type=str, required=True, env_var="NETWORK", help="The network to scout peers for"
         )
         parser.add_argument(
-            "--target_country",
+            "--target_countries",
             type=str,
+            nargs="*",
+            default=["CA", "US"],
             required=False,
-            default=None,
-            env_var="TARGET_COUNTRY",
-            help="Comma-separated list of target countries (e.g. 'CA,US' or 'DE')",
+            env_var="TARGET_COUNTRIES",
+            help="List of target countries. Can be comma or space separated (e.g. 'CA,US,GB' or 'CA US GB').",
         )
         parser.add_argument(
             "--desired_count",
