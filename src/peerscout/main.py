@@ -7,6 +7,7 @@ import difflib
 import logging
 import re
 import socket
+import sys
 import time
 from dataclasses import dataclass
 from operator import itemgetter
@@ -18,6 +19,18 @@ import ping3
 
 # Enable exceptions mode for ping3
 ping3.EXCEPTIONS = True
+
+
+class UnsupportedNetworkError(ValueError):
+    """Exception raised for unsupported networks."""
+
+
+class ServiceUnavailableError(Exception):
+    """Exception raised for service unavailability."""
+
+
+class NoValidPeersError(Exception):
+    """Exception raised for no valid peers."""
 
 
 class PolkachuService(TypedDict):
@@ -284,7 +297,7 @@ class Data:
             logging.warning("Error fetching data from %s: %s", url, e)
             return {}
 
-    def fetch_valid_chains(self) -> dict:
+    def fetch_valid_chains(self) -> list[str]:
         """Retrieve a list of chains supported by Polkachu."""
         return self._fetch_data("api/v2/chains")
 
@@ -457,44 +470,59 @@ def main() -> None:
     config = Config.initialise()
     data = Data(config)
 
-    valid_chains = data.fetch_valid_chains()
+    try:
+        valid_chains = data.fetch_valid_chains()
 
-    if config.peers.network not in valid_chains:
-        close_matches = difflib.get_close_matches(config.peers.network, valid_chains)
-        msg = "The network '%s' is not supported by Polkachu."
-        if close_matches:
-            msg += f" Did you mean {', '.join(close_matches)}?"
-        logging.error(msg, config.peers.network)
-        return
+        if config.peers.network not in valid_chains:
+            close_matches = difflib.get_close_matches(config.peers.network, valid_chains)
+            msg = f"The network '{config.peers.network}' is not supported by Polkachu."
+            if close_matches:
+                msg += f" Did you mean {', '.join(close_matches)}?"
+            raise UnsupportedNetworkError(msg)  # noqa: TRY301
+    except UnsupportedNetworkError as e:
+        logging.error(e)  # noqa: TRY400
+        sys.exit(1)
 
-    chain_details = data.fetch_chain_details()
+    try:
+        chain_details = data.fetch_chain_details()
 
-    if not chain_details.polkachu_services["live_peers"]["active"]:
-        logging.error("Live peers service not available for %s", chain_details.name)
-        return
+        if not chain_details.polkachu_services["live_peers"]["active"]:
+            msg = "Live peers service not available for %s"
+            logging.error(msg, chain_details.name)
+            raise ServiceUnavailableError(msg)  # noqa: TRY301
+    except ServiceUnavailableError as e:
+        logging.error(e)  # noqa: TRY400
+        sys.exit(1)
 
     peers_data = data.fetch_live_peers()
     peers = peers_data.live_peers
 
     filtered_data = Filter(config)
-    valid_peers = filtered_data.filter_peers(peers)
+    try:
+        valid_peers = filtered_data.filter_peers(peers)
 
-    if valid_peers:
-        match config.output_format:
-            case "list":
-                if len(valid_peers) < config.peers.desired_count:
-                    logging.warning("Only %d out of %d peers were found.", len(valid_peers), config.peers.desired_count)
-                else:
-                    logging.info("Found %d peers that meet the criteria:", len(valid_peers))
-                for peer in valid_peers:
-                    msg = f"- {peer}"
+        if valid_peers:
+            match config.output_format:
+                case "list":
+                    if len(valid_peers) < config.peers.desired_count:
+                        logging.warning(
+                            "Only %d out of %d peers were found.", len(valid_peers), config.peers.desired_count
+                        )
+                    else:
+                        logging.info("Found %d peers that meet the criteria:", len(valid_peers))
+                    for peer in valid_peers:
+                        msg = f"- {peer}"
+                        print(msg)
+                case "string":
+                    cs_output = ",".join(valid_peers)
+                    msg = f"Comma-Separated Peers:\n{cs_output}"
                     print(msg)
-            case "string":
-                cs_output = ",".join(valid_peers)
-                msg = f"Comma-Separated Peers:\n{cs_output}"
-                print(msg)
-    else:
-        logging.error("No valid peers found based on the given criteria.")
+        else:
+            msg = "No valid peers found based on the given criteria."
+            raise NoValidPeersError(msg)  # noqa: TRY301
+    except NoValidPeersError as e:
+        logging.error(e)  # noqa: TRY400
+        sys.exit(1)
 
 
 if __name__ == "__main__":
