@@ -27,6 +27,16 @@ Feature: PeerScout Tests
     And the latency of the peer is: 100ms
     Then the number of peers I expect to receive is: 0
 
+@wip
+  Scenario: Validate peer has ICMP blocked, but can be reached via TCP
+    Given the polkachu API returns the following chains: axelar,cosmos,dydx
+    When I specify the network: cosmos
+    And I specify the target countries: CA,US
+    And I specify the maximum allowed latency to: 50ms
+    And the peer responds with a Host Timeout
+    And I attempt to connect to the peer via TCP
+    Then the number of peers I expect to receive is: 1
+
   Scenario: Validate incorrect network being used
     Given the polkachu API returns the following chains: axelar,cosmos
     When I specify the network: dydx
